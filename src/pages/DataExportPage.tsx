@@ -3,7 +3,8 @@ import { useDataStore } from '@/store/dataStore';
 import { ChartCard } from '@/components/layout/ChartCard';
 import { useWaterMass } from '@/hooks/useWaterMass';
 import { useHorizontalInterpolation } from '@/hooks/useContours';
-import { exportShapefile, downloadBlob, type ShapeFeature } from '@/utils/gis/shapefileWriter';
+import { buildCombinedZip, downloadBlob, type ShapeFeature } from '@/utils/gis/shapefileWriter';
+import { generateWaterMassPolygons } from '@/utils/gis/waterMassBoundary';
 import type { ParameterType } from '@/types/oceanography';
 import {
   Download, MapPin, GitBranch, Layers, Globe, FileType,
@@ -36,7 +37,7 @@ const layerConfig: Record<LayerKey, {
   },
   waterMasses: {
     label: '水团 Shapefile',
-    desc: 'Polygon类型 · K-Means聚类凸包',
+    desc: 'Polygon类型 · 50m深度层水团地理分布',
     icon: Layers,
     color: '#F4D35E',
     filePrefix: 'water_masses',
@@ -186,11 +187,17 @@ const DataExportPage: React.FC = () => {
 
   const selectedStations = stations;
   const { waterMasses } = useWaterMass(selectedStations);
-  const grid = useHorizontalInterpolation(selectedStations, {
+  const tempGrid = useHorizontalInterpolation(selectedStations, {
     depthLevel: 50,
     parameter: 'temperature' as ParameterType,
     algorithm: 'kriging',
   });
+  const salGrid = useHorizontalInterpolation(selectedStations, {
+    depthLevel: 50,
+    parameter: 'salinity' as ParameterType,
+    algorithm: 'kriging',
+  });
+  const grid = tempGrid;
 
   const stationAttrs: Record<string, string | number>[] = stations.slice(0, 20).map(s => ({
     station_id: s.name,
@@ -220,11 +227,35 @@ const DataExportPage: React.FC = () => {
     n_points: wm.pointCount,
   }));
 
+  const waterMassFeatures = React.useMemo(() => {
+    if (!tempGrid || !salGrid || waterMasses.length === 0) return [];
+    try {
+      return generateWaterMassPolygons(
+        {
+          values: tempGrid.values,
+          xMin: tempGrid.xMin, xMax: tempGrid.xMax,
+          yMin: tempGrid.yMin, yMax: tempGrid.yMax,
+          nx: tempGrid.nx, ny: tempGrid.ny,
+        },
+        {
+          values: salGrid.values,
+          xMin: salGrid.xMin, xMax: salGrid.xMax,
+          yMin: salGrid.yMin, yMax: salGrid.yMax,
+          nx: salGrid.nx, ny: salGrid.ny,
+        },
+        waterMasses,
+        coordSystem
+      );
+    } catch {
+      return [];
+    }
+  }, [tempGrid, salGrid, waterMasses, coordSystem]);
+
   const totalEnabled = (exportConfig.stations ? 1 : 0) + (exportConfig.contours ? 1 : 0) + (exportConfig.waterMasses ? 1 : 0);
   const totalFeatures =
     (exportConfig.stations ? stations.length : 0) +
     (exportConfig.contours ? (grid?.contours.length || 0) : 0) +
-    (exportConfig.waterMasses ? waterMasses.length : 0);
+    (exportConfig.waterMasses ? waterMassFeatures.length : 0);
 
   const handleExport = async () => {
     if (totalEnabled === 0) {
@@ -236,7 +267,8 @@ const DataExportPage: React.FC = () => {
     setExportMsg(null);
 
     try {
-      const exportedLayers: string[] = [];
+      const layers: { features: ShapeFeature[]; layerName: string }[] = [];
+      const exportedNames: string[] = [];
 
       if (exportConfig.stations && stations.length > 0) {
         const features: ShapeFeature[] = stations.map(s => ({
@@ -251,9 +283,8 @@ const DataExportPage: React.FC = () => {
           },
           points: [{ x: s.longitude, y: s.latitude }],
         }));
-        const blob = await exportShapefile(features, 'stations');
-        downloadBlob(blob, `stations_${coordSystem}.zip`);
-        exportedLayers.push('站点');
+        layers.push({ features, layerName: 'stations' });
+        exportedNames.push('站点');
       }
 
       if (exportConfig.contours && grid?.contours.length) {
@@ -268,44 +299,22 @@ const DataExportPage: React.FC = () => {
           },
           points: c.coordinates.map(([x, y]) => ({ x, y })),
         }));
-        const blob = await exportShapefile(features, 'contours');
-        downloadBlob(blob, `contours_${coordSystem}.zip`);
-        exportedLayers.push('等值线');
+        layers.push({ features, layerName: 'contours' });
+        exportedNames.push('等值线');
       }
 
-      if (exportConfig.waterMasses && waterMasses.length > 0) {
-        const features: ShapeFeature[] = waterMasses.map(wm => {
-          const points = [
-            { x: wm.centroid.sal - 1, y: wm.centroid.temp - 1 },
-            { x: wm.centroid.sal + 1, y: wm.centroid.temp - 1 },
-            { x: wm.centroid.sal + 1, y: wm.centroid.temp + 1 },
-            { x: wm.centroid.sal - 1, y: wm.centroid.temp + 1 },
-            { x: wm.centroid.sal - 1, y: wm.centroid.temp - 1 },
-          ];
-          return {
-            type: 'polygon',
-            properties: {
-              mass_id: wm.id.toUpperCase(),
-              name: wm.name,
-              cluster: wm.clusterIndex + 1,
-              T_min: +wm.tempRange[0].toFixed(3),
-              T_max: +wm.tempRange[1].toFixed(3),
-              S_min: +wm.salRange[0].toFixed(3),
-              S_max: +wm.salRange[1].toFixed(3),
-              n_points: wm.pointCount,
-            },
-            points,
-            parts: [0],
-          };
-        });
-        const blob = await exportShapefile(features, 'water_masses');
-        downloadBlob(blob, `water_masses_${coordSystem}.zip`);
-        exportedLayers.push('水团');
+      if (exportConfig.waterMasses && waterMassFeatures.length > 0) {
+        layers.push({ features: waterMassFeatures, layerName: 'water_masses' });
+        exportedNames.push('水团');
       }
+
+      const zipBlob = await buildCombinedZip(layers, coordSystem, 'ocean_hydro_export');
+      const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      downloadBlob(zipBlob, `ocean_hydro_${coordSystem}_${timestamp}.zip`);
 
       setExportMsg({
         type: 'success',
-        text: `成功导出 ${exportedLayers.length} 个图层: ${exportedLayers.join(', ')}`,
+        text: `导出成功！已打包 ${exportedNames.length} 个图层到单个ZIP: ${exportedNames.join(', ')}`,
       });
     } catch (e: any) {
       setExportMsg({
@@ -343,7 +352,7 @@ const DataExportPage: React.FC = () => {
                   disabled={
                     (key === 'stations' && stations.length === 0) ||
                     (key === 'contours' && (!grid || grid.contours.length === 0)) ||
-                    (key === 'waterMasses' && waterMasses.length === 0)
+                    (key === 'waterMasses' && waterMassFeatures.length === 0)
                   }
                 />
               ))}
@@ -498,7 +507,7 @@ const DataExportPage: React.FC = () => {
                 <AttrTable rows={contourAttrs} title={`等值线图层 (${grid?.contours.length || 0}条)`} />
               )}
               {exportConfig.waterMasses && waterMassAttrs.length > 0 && (
-                <AttrTable rows={waterMassAttrs} title={`水团图层 (${waterMasses.length}条)`} />
+                <AttrTable rows={waterMassAttrs} title={`水团图层 (${waterMassFeatures.length}个面)`} />
               )}
               {!exportConfig.stations && !exportConfig.contours && !exportConfig.waterMasses && (
                 <div className="h-full flex flex-col items-center justify-center gap-4 text-center py-12">

@@ -217,10 +217,20 @@ const writeShpShx = (features: ShapeFeature[], shapeType: number): { shp: Uint8A
   return { shp: new Uint8Array(shpBuffer), shx: new Uint8Array(shxBuffer) };
 };
 
-export const exportShapefile = async (
+const PRJ_WKT: Record<string, string> = {
+  WGS84: `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]`,
+  CGCS2000: `GEOGCS["China Geodetic Coordinate System 2000",DATUM["D_China_2000",SPHEROID["CGCS2000",6378137.0,298.257222101]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]`,
+};
+
+export const getPrjWkt = (crs: string): string => {
+  return PRJ_WKT[crs] || PRJ_WKT.WGS84;
+};
+
+export const createShapefileFiles = (
   features: ShapeFeature[],
-  layerName: string
-): Promise<Blob> => {
+  layerName: string,
+  crs: string = 'WGS84'
+): { shp: Uint8Array; shx: Uint8Array; dbf: Uint8Array; prj: string } => {
   if (features.length === 0) throw new Error('No features to export');
 
   let shapeType: number;
@@ -230,14 +240,58 @@ export const exportShapefile = async (
 
   const { shp, shx } = writeShpShx(features, shapeType);
   const dbf = writeDBF(features.map(f => f.properties));
+  const prj = getPrjWkt(crs);
 
-  const prjContent = `GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137.0,298.257223563]],PRIMEM["Greenwich",0.0],UNIT["Degree",0.0174532925199433]]`;
+  return { shp, shx, dbf, prj };
+};
+
+export const exportShapefile = async (
+  features: ShapeFeature[],
+  layerName: string,
+  crs: string = 'WGS84'
+): Promise<Blob> => {
+  const { shp, shx, dbf, prj } = createShapefileFiles(features, layerName, crs);
 
   const zip = new JSZip();
   zip.file(`${layerName}.shp`, shp);
   zip.file(`${layerName}.shx`, shx);
   zip.file(`${layerName}.dbf`, dbf);
-  zip.file(`${layerName}.prj`, prjContent);
+  zip.file(`${layerName}.prj`, prj);
+
+  return await zip.generateAsync({ type: 'blob' });
+};
+
+export const buildCombinedZip = async (
+  layers: {
+    features: ShapeFeature[];
+    layerName: string;
+  }[],
+  crs: string = 'WGS84',
+  outputName: string = 'ocean_viz_export'
+): Promise<Blob> => {
+  const zip = new JSZip();
+
+  for (const layer of layers) {
+    if (!layer.features || layer.features.length === 0) continue;
+    const { shp, shx, dbf, prj } = createShapefileFiles(layer.features, layer.layerName, crs);
+    zip.file(`${layer.layerName}/${layer.layerName}.shp`, shp);
+    zip.file(`${layer.layerName}/${layer.layerName}.shx`, shx);
+    zip.file(`${layer.layerName}/${layer.layerName}.dbf`, dbf);
+    zip.file(`${layer.layerName}/${layer.layerName}.prj`, prj);
+  }
+
+  const metaContent = [
+    'OceanViz 水文观测数据导出结果',
+    `生成时间: ${new Date().toLocaleString('zh-CN')}`,
+    `坐标系: ${crs}`,
+    `图层数量: ${layers.filter(l => l.features && l.features.length > 0).length}`,
+    '',
+    ...layers.filter(l => l.features && l.features.length > 0).map(l =>
+      `  · ${l.layerName} (${l.features.length} 个要素)`
+    ),
+  ].join('\r\n');
+
+  zip.file('readme.txt', metaContent);
 
   return await zip.generateAsync({ type: 'blob' });
 };
