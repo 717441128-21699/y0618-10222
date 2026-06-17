@@ -44,7 +44,7 @@ const computeBBox = (features: ShapeFeature[]): [number, number, number, number]
 };
 
 const getFieldDefs = (properties: Record<string, string | number>[]) => {
-  const fields: { name: string; type: 'C' | 'N'; length: number; decimals: number }[] = [];
+  const fields: { name: string; originalKey: string; type: 'C' | 'N'; length: number; decimals: number }[] = [];
   if (properties.length === 0) return fields;
 
   const keys = Object.keys(properties[0]);
@@ -65,6 +65,7 @@ const getFieldDefs = (properties: Record<string, string | number>[]) => {
     if (isNumeric) {
       fields.push({
         name: key.substring(0, 10),
+        originalKey: key,
         type: 'N',
         length: Math.max(4, Math.min(18, maxLen + 2)),
         decimals: Math.min(8, maxDecimals),
@@ -72,6 +73,7 @@ const getFieldDefs = (properties: Record<string, string | number>[]) => {
     } else {
       fields.push({
         name: key.substring(0, 10),
+        originalKey: key,
         type: 'C',
         length: Math.max(1, Math.min(254, maxLen)),
         decimals: 0,
@@ -118,7 +120,7 @@ const writeDBF = (properties: Record<string, string | number>[]): Uint8Array => 
     buffer.writeUInt8(0x20, offset);
     offset += 1;
     for (const f of fields) {
-      const rawVal = p[f.name] ?? '';
+      const rawVal = p[f.originalKey] ?? '';
       let strVal: string;
       if (f.type === 'N') {
         const num = Number(rawVal) || 0;
