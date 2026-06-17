@@ -1,0 +1,155 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Noto+Sans+SC:wght@300;400;500;600;700&family=Source+Code+Pro:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Noto Sans SC', 'Source Sans Pro', system-ui, sans-serif;
+  background: linear-gradient(180deg, #051429 0%, #081C4F 40%, #0A2463 100%);
+  background-attachment: fixed;
+  color: #E6F0FF;
+  min-height: 100vh;
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-white/[0.04] backdrop-blur-md border border-white/[0.08] rounded-xl;
+    box-shadow: 0 8px 32px rgba(5, 20, 41, 0.3), inset 0 1px 0 rgba(255,255,255,0.06);
+  }
+
+  .glass-card-hover {
+    @apply transition-all duration-300 hover:bg-white/[0.07] hover:border-marine-cyan/30 hover:shadow-cyan-glow;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-ocean-100/70 transition-all duration-200 cursor-pointer;
+  }
+
+  .nav-item:hover {
+    @apply bg-white/[0.06] text-ocean-50;
+  }
+
+  .nav-item-active {
+    @apply bg-gradient-to-r from-marine-cyan/25 to-marine-cyan/10 text-marine-cyan border-l-2 border-marine-cyan;
+  }
+
+  .btn-primary {
+    @apply px-5 py-2.5 rounded-lg bg-gradient-to-r from-marine-cyan to-ocean-500 text-white font-medium;
+    @apply transition-all duration-200 hover:shadow-cyan-glow hover:-translate-y-0.5;
+    @apply active:translate-y-0 border border-marine-cyan/40;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 rounded-lg bg-white/[0.06] text-ocean-100 border border-white/[0.1];
+    @apply transition-all duration-200 hover:bg-white/[0.10] hover:border-marine-cyan/30;
+  }
+
+  .btn-accent {
+    @apply px-4 py-2 rounded-lg bg-gradient-to-r from-marine-coral to-marine-rust text-white font-medium;
+    @apply transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-2.5 rounded-lg bg-ocean-900/60 border border-white/[0.1] text-ocean-50;
+    @apply placeholder-ocean-200/40 focus:outline-none focus:border-marine-cyan/60;
+    @apply focus:ring-1 focus:ring-marine-cyan/30 transition-all;
+  }
+
+  .section-title {
+    @apply font-display text-2xl font-semibold text-ocean-50 tracking-tight;
+  }
+
+  .card-title {
+    @apply font-semibold text-ocean-50 text-lg tracking-tight;
+  }
+
+  .data-label {
+    @apply text-xs uppercase tracking-wider text-ocean-200/60 font-medium;
+  }
+
+  .data-value {
+    @apply font-mono text-ocean-50 text-lg;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: rgba(255,255,255,0.03);
+    border-radius: 3px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgba(62,146,204,0.3);
+    border-radius: 3px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: rgba(62,146,204,0.5);
+  }
+}
+
+.chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(5, 20, 41, 0.95);
+  border: 1px solid rgba(62, 146, 204, 0.35);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #E6F0FF;
+  z-index: 100;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  white-space: nowrap;
+}
+
+.axis-label {
+  font-family: 'Source Code Pro', monospace;
+  font-size: 11px;
+  fill: rgba(230, 240, 255, 0.6);
+}
+
+.tick-line {
+  stroke: rgba(255,255,255,0.08);
+  stroke-width: 1;
+}
+
+.contour-label {
+  font-family: 'Source Code Pro', monospace;
+  font-size: 10px;
+  fill: rgba(255,255,255,0.9);
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+@keyframes fadeInStagger {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in-stagger > * {
+  opacity: 0;
+  animation: fadeInStagger 0.5s ease forwards;
+}
+
+.fade-in-stagger > *:nth-child(1) { animation-delay: 0.05s; }
+.fade-in-stagger > *:nth-child(2) { animation-delay: 0.1s; }
+.fade-in-stagger > *:nth-child(3) { animation-delay: 0.15s; }
+.fade-in-stagger > *:nth-child(4) { animation-delay: 0.2s; }
+.fade-in-stagger > *:nth-child(5) { animation-delay: 0.25s; }
+.fade-in-stagger > *:nth-child(6) { animation-delay: 0.3s; }
