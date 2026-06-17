@@ -12,9 +12,17 @@ const writeDoubleLE = (buffer: Buffer, offset: number, value: number) => {
   buffer.writeDoubleLE(value, offset);
 };
 
-const padString = (str: string, length: number): string => {
-  if (str.length >= length) return str.substring(0, length);
-  return str.padEnd(length, ' ');
+const utf8ByteLength = (str: string): number => {
+  return Buffer.byteLength(str, 'utf8');
+};
+
+const padStringUtf8 = (str: string, byteLength: number): string => {
+  let result = str;
+  while (utf8ByteLength(result) > byteLength) {
+    result = result.slice(0, -1);
+  }
+  const padLen = byteLength - utf8ByteLength(result);
+  return result + ' '.repeat(padLen);
 };
 
 interface ShapePoint {
@@ -50,12 +58,13 @@ const getFieldDefs = (properties: Record<string, string | number>[]) => {
   const keys = Object.keys(properties[0]);
   for (const key of keys) {
     let isNumeric = true;
-    let maxLen = 0;
+    let maxByteLen = 0;
     let maxDecimals = 0;
     for (const p of properties) {
       const val = p[key];
       const strVal = String(val ?? '');
-      maxLen = Math.max(maxLen, strVal.length);
+      const byteLen = utf8ByteLength(strVal);
+      maxByteLen = Math.max(maxByteLen, byteLen);
       if (typeof val !== 'number') isNumeric = false;
       else {
         const decimals = (strVal.split('.')[1] || '').length;
@@ -67,7 +76,7 @@ const getFieldDefs = (properties: Record<string, string | number>[]) => {
         name: key.substring(0, 10),
         originalKey: key,
         type: 'N',
-        length: Math.max(4, Math.min(18, maxLen + 2)),
+        length: Math.max(4, Math.min(18, maxByteLen + 2)),
         decimals: Math.min(8, maxDecimals),
       });
     } else {
@@ -75,7 +84,7 @@ const getFieldDefs = (properties: Record<string, string | number>[]) => {
         name: key.substring(0, 10),
         originalKey: key,
         type: 'C',
-        length: Math.max(1, Math.min(254, maxLen)),
+        length: Math.max(1, Math.min(254, maxByteLen)),
         decimals: 0,
       });
     }
@@ -102,7 +111,7 @@ const writeDBF = (properties: Record<string, string | number>[]): Uint8Array => 
 
   let offset = 32;
   for (const f of fields) {
-    buffer.write(padString(f.name, 11), offset, 'ascii');
+    buffer.write(padStringUtf8(f.name, 11), offset, 'utf8');
     offset += 11;
     buffer.write(f.type, offset, 'ascii');
     offset += 1;
@@ -124,11 +133,11 @@ const writeDBF = (properties: Record<string, string | number>[]): Uint8Array => 
       let strVal: string;
       if (f.type === 'N') {
         const num = Number(rawVal) || 0;
-        strVal = padString(num.toFixed(f.decimals), f.length);
+        strVal = padStringUtf8(num.toFixed(f.decimals), f.length);
       } else {
-        strVal = padString(String(rawVal), f.length);
+        strVal = padStringUtf8(String(rawVal), f.length);
       }
-      buffer.write(strVal, offset, 'ascii');
+      buffer.write(strVal, offset, 'utf8');
       offset += f.length;
     }
   }
@@ -141,8 +150,8 @@ const writeShpShx = (features: ShapeFeature[], shapeType: number): { shp: Uint8A
   const bbox = computeBBox(features);
   const [minX, minY, maxX, maxY] = bbox;
 
-  const records: { content: Buffer; offset: number; length: number }[] = [];
-  let fileOffset = 50;
+  const records: { content: Buffer; offsetWords: number; lengthWords: number }[] = [];
+  let fileOffsetBytes = 100;
 
   for (let i = 0; i < features.length; i++) {
     const f = features[i];
@@ -166,7 +175,10 @@ const writeShpShx = (features: ShapeFeature[], shapeType: number): { shp: Uint8A
       writeInt32LE(content, 36, parts.length);
       writeInt32LE(content, 40, nPoints);
       let pOff = 44;
-      for (const part of parts) writeInt32LE(content, pOff, part), pOff += 4;
+      for (const part of parts) {
+        writeInt32LE(content, pOff, part);
+        pOff += 4;
+      }
       for (const pt of f.points!) {
         writeDoubleLE(content, pOff, pt.x);
         writeDoubleLE(content, pOff + 8, pt.y);
@@ -176,16 +188,18 @@ const writeShpShx = (features: ShapeFeature[], shapeType: number): { shp: Uint8A
       content = Buffer.alloc(0);
     }
 
-    const length = Math.ceil(content.length / 2);
-    records.push({ content, offset: fileOffset, length });
-    fileOffset += 8 + content.length;
+    const contentLenWords = Math.ceil(content.length / 2);
+    const offsetWords = fileOffsetBytes / 2;
+
+    records.push({ content, offsetWords, lengthWords: contentLenWords });
+    fileOffsetBytes += 8 + content.length;
   }
 
-  const totalShpLength = fileOffset;
-  const shpBuffer = Buffer.alloc(totalShpLength);
+  const totalShpBytes = fileOffsetBytes;
+  const shpBuffer = Buffer.alloc(totalShpBytes);
 
   writeInt32BE(shpBuffer, 0, 9994);
-  writeInt32BE(shpBuffer, 24, (totalShpLength / 2));
+  writeInt32BE(shpBuffer, 24, totalShpBytes / 2);
   writeInt32LE(shpBuffer, 28, 1000);
   writeInt32LE(shpBuffer, 32, shapeType);
   writeDoubleLE(shpBuffer, 36, minX);
@@ -200,9 +214,9 @@ const writeShpShx = (features: ShapeFeature[], shapeType: number): { shp: Uint8A
   for (let i = 0; i < records.length; i++) {
     const r = records[i];
     writeInt32BE(shpBuffer, shpOffset, i);
-    writeInt32BE(shpBuffer, shpOffset + 4, r.length);
+    writeInt32BE(shpBuffer, shpOffset + 4, r.lengthWords);
     r.content.copy(shpBuffer, shpOffset + 8);
-    shxRecords.push({ offset: (r.offset - 50) / 2, length: r.length });
+    shxRecords.push({ offset: r.offsetWords, length: r.lengthWords });
     shpOffset += 8 + r.content.length;
   }
 
@@ -232,19 +246,32 @@ export const createShapefileFiles = (
   features: ShapeFeature[],
   layerName: string,
   crs: string = 'WGS84'
-): { shp: Uint8Array; shx: Uint8Array; dbf: Uint8Array; prj: string } => {
-  if (features.length === 0) throw new Error('No features to export');
+): { shp: Uint8Array; shx: Uint8Array; dbf: Uint8Array; prj: string; cpg: string } => {
+  if (!features || features.length === 0) {
+    throw new Error(`图层 ${layerName} 没有可导出的要素`);
+  }
 
   let shapeType: number;
   if (features[0].type === 'point') shapeType = 1;
   else if (features[0].type === 'polyline') shapeType = 3;
   else shapeType = 5;
 
+  for (let i = 0; i < features.length; i++) {
+    const f = features[i];
+    if (!f.points || f.points.length === 0) {
+      throw new Error(`第 ${i} 个要素没有坐标点`);
+    }
+    if ((shapeType === 3 || shapeType === 5) && (!f.parts || f.parts.length === 0)) {
+      f.parts = [0];
+    }
+  }
+
   const { shp, shx } = writeShpShx(features, shapeType);
   const dbf = writeDBF(features.map(f => f.properties));
   const prj = getPrjWkt(crs);
+  const cpg = 'UTF-8';
 
-  return { shp, shx, dbf, prj };
+  return { shp, shx, dbf, prj, cpg };
 };
 
 export const exportShapefile = async (
@@ -252,13 +279,14 @@ export const exportShapefile = async (
   layerName: string,
   crs: string = 'WGS84'
 ): Promise<Blob> => {
-  const { shp, shx, dbf, prj } = createShapefileFiles(features, layerName, crs);
+  const { shp, shx, dbf, prj, cpg } = createShapefileFiles(features, layerName, crs);
 
   const zip = new JSZip();
   zip.file(`${layerName}.shp`, shp);
   zip.file(`${layerName}.shx`, shx);
   zip.file(`${layerName}.dbf`, dbf);
   zip.file(`${layerName}.prj`, prj);
+  zip.file(`${layerName}.cpg`, cpg);
 
   return await zip.generateAsync({ type: 'blob' });
 };
@@ -272,25 +300,41 @@ export const buildCombinedZip = async (
   outputName: string = 'ocean_viz_export'
 ): Promise<Blob> => {
   const zip = new JSZip();
+  const validLayers: { layerName: string; count: number }[] = [];
 
   for (const layer of layers) {
     if (!layer.features || layer.features.length === 0) continue;
-    const { shp, shx, dbf, prj } = createShapefileFiles(layer.features, layer.layerName, crs);
-    zip.file(`${layer.layerName}/${layer.layerName}.shp`, shp);
-    zip.file(`${layer.layerName}/${layer.layerName}.shx`, shx);
-    zip.file(`${layer.layerName}/${layer.layerName}.dbf`, dbf);
-    zip.file(`${layer.layerName}/${layer.layerName}.prj`, prj);
+    try {
+      const { shp, shx, dbf, prj, cpg } = createShapefileFiles(layer.features, layer.layerName, crs);
+      zip.folder(layer.layerName);
+      zip.file(`${layer.layerName}/${layer.layerName}.shp`, shp);
+      zip.file(`${layer.layerName}/${layer.layerName}.shx`, shx);
+      zip.file(`${layer.layerName}/${layer.layerName}.dbf`, dbf);
+      zip.file(`${layer.layerName}/${layer.layerName}.prj`, prj);
+      zip.file(`${layer.layerName}/${layer.layerName}.cpg`, cpg);
+      validLayers.push({ layerName: layer.layerName, count: layer.features.length });
+    } catch (e) {
+      console.warn(`图层 ${layer.layerName} 导出失败:`, e);
+    }
+  }
+
+  if (validLayers.length === 0) {
+    throw new Error('没有可导出的有效图层');
   }
 
   const metaContent = [
-    'OceanViz 水文观测数据导出结果',
+    '海洋水文数据可视化 - Shapefile 导出说明',
     `生成时间: ${new Date().toLocaleString('zh-CN')}`,
     `坐标系: ${crs}`,
-    `图层数量: ${layers.filter(l => l.features && l.features.length > 0).length}`,
+    `图层数量: ${validLayers.length}`,
     '',
-    ...layers.filter(l => l.features && l.features.length > 0).map(l =>
-      `  · ${l.layerName} (${l.features.length} 个要素)`
-    ),
+    '图层清单:',
+    ...validLayers.map(l => `  · ${l.layerName} (${l.count} 个要素)`),
+    '',
+    '编码说明:',
+    '  · DBF 属性表: UTF-8 编码（.cpg 文件标识）',
+    '  · PRJ 投影: 标准 WKT 格式',
+    '  · SHP 几何: ESRI Shapefile 标准',
   ].join('\r\n');
 
   zip.file('readme.txt', metaContent);
@@ -298,14 +342,14 @@ export const buildCombinedZip = async (
   return await zip.generateAsync({ type: 'blob' });
 };
 
-export const downloadBlob = (blob: Blob, filename: string) => {
+export const downloadBlob = (blob: Blob, fileName: string) => {
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
 };
 

@@ -145,11 +145,11 @@ export const generateWaterMassPolygons = (
 
           const area = ringArea(geoRing);
           if (ringIdx === 0) {
-            if (area < 0) {
+            if (area > 0) {
               geoRing = reverseRing(geoRing);
             }
           } else {
-            if (area > 0) {
+            if (area < 0) {
               geoRing = reverseRing(geoRing);
             }
           }
